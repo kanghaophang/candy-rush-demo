@@ -1,6 +1,5 @@
 {
   "name": "sugar_rush",
-  "note": "接近 Sugar Rush 的聚簇赔率（可在 Admin 中覆盖/编辑）",
   "thresholds": [
     5,
     6,

@@ -1,6 +1,6 @@
 
 import React, { useMemo, useState } from 'react'
-import { ROWS, COLS, MAX_MULT, SYMBOLS, DEFAULT_WEIGHTS, idx, emptyMult, generateBoard, findClusters, collapseAndRefill, countScatter, awardFreeSpins } from './engine'
+import { ROWS, COLS, MAX_MULT, SYMBOLS, DEFAULT_WEIGHTS, emptyMult, generateBoard, findClusters, countScatter, awardFreeSpins } from './engine'
 import PT_DEFAULT from './data/paytable.default.json'
 import PT_SUGAR from './data/paytable.sugar_rush.json'
 import './index.css'
@@ -9,7 +9,7 @@ const url = (name)=> `${import.meta.env.BASE_URL}sfx/${name}`;
 const sfx = { click:new Audio(url('click.wav')), spin:new Audio(url('spin.wav')), win:new Audio(url('win.wav')), big:new Audio(url('bigwin.wav')), scatter:new Audio(url('scatter.wav')), free:new Audio(url('free.wav')), drop:new Audio(url('drop.wav')) };
 Object.values(sfx).forEach(a=> { a.preload='auto'; a.volume=.4; });
 
-const TEMPO={ normal:{explode:120,post:70,drop:120,settle:85,between:65,start:100}, turbo:{explode:75,post:40,drop:85,settle:60,between:40,start:60}, hyper:{explode:55,post:25,drop:65,settle:45,between:28,start:45} };
+const TEMPO={ normal:{explode:120,vanish:140,post:40,drop:120,settle:85,between:65,start:100}, turbo:{explode:80,vanish:120,post:30,drop:85,settle:60,between:40,start:60}, hyper:{explode:60,vanish:100,post:20,drop:65,settle:45,between:28,start:45} };
 const sleep=(ms)=> new Promise(r=> setTimeout(r, ms));
 const RETRIG={3:5,4:10,5:20,6:25,7:30};
 
@@ -21,38 +21,37 @@ function payBySize(pt, sym, size){
 }
 function nextMult(m){ if(m<2) return 2; return Math.min(MAX_MULT, m*2); }
 
-// Collapse + distance tracker
+// collapse with distances & return nb, dist
 function collapseWithDistances(board, weights){
   const nb = [...board];
   const dist = new Array(ROWS*COLS).fill(0);
+  // helper weightedPick
+  const ents = Object.entries(weights);
+  const total = ents.reduce((s,[,v])=>s+v,0);
+  const pick = ()=>{
+    let roll=Math.random()*total;
+    for(const [k,v] of ents){ if((roll-=v)<=0) return k; }
+    return ents[ents.length-1][0];
+  };
   for(let c=0;c<COLS;c++){
     const stack=[];
     for(let r=ROWS-1;r>=0;r--){
-      const i = r*COLS+c;
-      const v = nb[i];
+      const i=r*COLS+c, v=nb[i];
       if(v){ stack.push({v, r0:r}); nb[i]=null; }
     }
-    let rWrite = ROWS-1;
+    let rWrite=ROWS-1;
     for(const it of stack){
-      nb[rWrite*COLS+c] = it.v;
-      dist[rWrite*COLS+c] = rWrite - it.r0;
+      nb[rWrite*COLS+c]=it.v;
+      dist[rWrite*COLS+c]=rWrite-it.r0;
       rWrite--;
     }
     while(rWrite>=0){
-      const [k,v] = weightedPickShim(weights);
-      nb[rWrite*COLS+c] = k;
-      dist[rWrite*COLS+c] = (rWrite+1);
+      nb[rWrite*COLS+c]=pick();
+      dist[rWrite*COLS+c]=(rWrite+1);
       rWrite--;
     }
   }
   return { nb, dist };
-}
-function weightedPickShim(w){
-  const ents = Object.entries(w);
-  const total = ents.reduce((s,[,v])=>s+v,0);
-  let roll = Math.random()*total;
-  for(const [k,v] of ents){ if((roll-=v)<=0) return [k,v]; }
-  return ents[ents.length-1];
 }
 
 export default function App(){
@@ -73,17 +72,22 @@ export default function App(){
   const [speed, setSpeed] = useState('normal');
   const [auto, setAuto] = useState(0);
   const [exploding, setExploding] = useState(new Set());
+  const [vanishing, setVanishing] = useState(new Set());
   const [banner, setBanner] = useState('');
   const [dropDist, setDropDist] = useState(()=> new Array(ROWS*COLS).fill(0));
+  const [shake, setShake] = useState(false);
 
-  // Admin / RTP / Paytable controls
+  // Admin toggles
   const [showAdmin, setShowAdmin] = useState(false);
   const [adminPass, setAdminPass] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);
   const [rtpTilt, setRtpTilt] = useState(1.0);
-  const [pt, setPt] = useState(PT_SUGAR); // default to Sugar Rush preset, per your request
-  const [buyPriceX, setBuyPriceX] = useState(100); // Buy Free price (× bet)
-  const [buySpins, setBuySpins] = useState(10); // Free spins granted when buying
+  const [pt, setPt] = useState(PT_SUGAR);
+  const [buyPriceX, setBuyPriceX] = useState(100);
+  const [buySpins, setBuySpins] = useState(10);
+  const [fxParticles, setFxParticles] = useState(true);
+  const [fxShake, setFxShake] = useState(true);
+  const [gravityStrong, setGravityStrong] = useState(true);
 
   const effMult = useMemo(()=> inFree? freeMult : tempMult, [inFree, tempMult, freeMult]);
   const tempo = TEMPO[speed] || TEMPO.normal;
@@ -107,9 +111,18 @@ export default function App(){
     // explode
     const boom = new Set(); clusters.forEach(cl=> cl.cells.forEach(i=> boom.add(i)));
     setExploding(boom); (sfx.win.currentTime=0, sfx.win.play());
-    await sleep(tempo.explode); setExploding(new Set()); await sleep(tempo.post);
+    await sleep(tempo.explode);
 
-    // payout + mult
+    // particles on explode
+    if(fxParticles){
+      setVanishing(boom); // use vanish animation path
+    }else{
+      setVanishing(boom);
+    }
+    await sleep(tempo.vanish);
+    setExploding(new Set());
+
+    // payout + mult + remove
     for(const cl of clusters){
       const size = cl.cells.length;
       const mults = cl.cells.map(i=> (inFree? fM[i] : tM[i]));
@@ -122,16 +135,25 @@ export default function App(){
         nb[i]=null;
       }
     }
-
+    setVanishing(new Set());
     setTempMult(tM); setFreeMult(fM);
     setLastWin(w=> w+win); setTotalWin(w=> w+win);
     const ratio = win / Math.max(0.01, bet);
     if(ratio>=100) setBanner('EPIC WIN'); else if(ratio>=50) setBanner('MEGA WIN'); else if(ratio>=20) setBanner('BIG WIN'); else setBanner('');
 
-    // drop with distance
+    // drop
     const res = collapseWithDistances(nb, weights);
     setBoard(res.nb); setDropDist(res.dist);
     (sfx.drop.currentTime=0, sfx.drop.play());
+
+    // optional shake when many cells moved or many clusters
+    if(fxShake){
+      const moved = res.dist.reduce((s,x)=> s+(x>0?1:0), 0);
+      if(moved>=10 || clusters.length>=2){
+        setShake(true); setTimeout(()=> setShake(false), 220);
+      }
+    }
+
     await sleep(tempo.drop);
     setBoard(b=> [...b]); await sleep(tempo.settle);
     await sleep(tempo.between);
@@ -196,9 +218,19 @@ export default function App(){
     const m = (inFree? freeMult[i]: tempMult[i]) || 1;
     const col = i % COLS;
     const d = dropDist[i] || 0;
+    // delay and duration: column offset + distance-dependent duration
     const delayMs = col*12 + d*22;
+    const durMs = (gravityStrong ? 110 + d*35 : 100 + d*22); // stronger gravity => longer travel time for high cells
+    const isExpl = exploding.has(i);
+    const isVan = vanishing.has(i);
+    const anim = isVan ? 'vanish' : (isExpl ? 'explode' : 'fall');
     return (
-      <div className={`relative flex items-center justify-center rounded-xl border border-white/40 shadow-sm select-none ${def?.color||'bg-slate-200'} fall settle`} style={{aspectRatio:'1/1', '--d': `${delayMs}ms`}}>
+      <div className={`relative flex items-center justify-center rounded-xl border border-white/40 shadow-sm select-none ${def?.color||'bg-slate-200'} ${anim}`} style={{aspectRatio:'1/1', '--d': `${delayMs}ms`, '--t': `${durMs}ms`}}>
+        {/* Particles layers */}
+        <div className="p-layer absolute inset-0 flex items-center justify-center pointer-events-none">
+          {isExpl && fxParticles && <div className="p-burst" />}
+          {d>0 && fxParticles && !isExpl && !isVan && <div className="p-dust" />}
+        </div>
         <div className="text-2xl md:text-3xl">{def?.label||'?'}</div>
         {m>1 && <div className="badge">x{m}</div>}
         {isSc && <div className="absolute inset-0 rounded-xl ring-2 ring-pink-400"></div>}
@@ -207,7 +239,7 @@ export default function App(){
   }
 
   const grid = (
-    <div className="board-frame p-2">
+    <div className={"board-frame p-2 " + (shake? 'shake':'')}>
       <div className="grid grid-cols-7 gap-2">
         {board.map((k,i)=> <Cell key={i} i={i} k={k} />)}
       </div>
@@ -260,7 +292,7 @@ export default function App(){
         </div>
       </div>
 
-      {/* Admin modal (RTP, Paytable preset, Buy Free price) */}
+      {/* Admin modal */}
       {showAdmin && (
         <div className="modal" onClick={()=> setShowAdmin(false)}>
           <div className="modal-card" onClick={e=> e.stopPropagation()}>
@@ -273,50 +305,34 @@ export default function App(){
               </div>
             ) : (
               <div className="grid gap-4">
-                {/* Paytable preset */}
                 <div>
                   <div className="font-bold mb-1">赔率表 Preset</div>
                   <div className="flex gap-2">
                     <button className="px-3 py-2 bg-white rounded border" onClick={()=> setPt(PT_SUGAR)}>Sugar Rush</button>
                     <button className="px-3 py-2 bg-white rounded border" onClick={()=> setPt(PT_DEFAULT)}>Default</button>
                   </div>
-                  <div className="text-xs opacity-70 mt-1">当前 preset：{pt.name||'custom'}</div>
                 </div>
-
-                {/* Buy Free settings */}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <div className="font-bold mb-1">Buy Free 价格（×Bet）</div>
                     <input type="number" min={10} max={500} step={1} value={buyPriceX} onChange={e=> setBuyPriceX(parseInt(e.target.value||'100'))} className="w-full px-3 py-2 border rounded" />
-                    <div className="text-xs opacity-70 mt-1">常见为 100× 或 120×</div>
                   </div>
                   <div>
                     <div className="font-bold mb-1">Buy Free 赠送局数</div>
                     <input type="number" min={6} max={20} step={1} value={buySpins} onChange={e=> setBuySpins(parseInt(e.target.value||'10'))} className="w-full px-3 py-2 border rounded" />
-                    <div className="text-xs opacity-70 mt-1">常见为 10 局</div>
                   </div>
                 </div>
-
-                {/* RTP tilt and weights */}
                 <div>
                   <div className="font-bold mb-1">RTP 倾向（0.7–1.4）</div>
                   <input type="range" min={0.7} max={1.4} step={0.01} value={rtpTilt} onChange={e=> applyRtpTilt(parseFloat(e.target.value))} className="w-full" />
-                  <div className="text-xs opacity-70 mt-1">当前：{rtpTilt.toFixed(2)}（右侧更高命中，左侧更硬）</div>
                 </div>
-                <div>
-                  <div className="font-bold mb-1">符号权重</div>
-                  {Object.keys(weights).map(k=> (
-                    <div key={k} className="flex items-center gap-2 text-sm">
-                      <div className="w-10 font-mono">{k}</div>
-                      <input type="range" min={0} max={40} value={weights[k]} onChange={e=> setWeights({ ...weights, [k]: +e.target.value })} className="flex-1" />
-                      <div className="w-8 text-right">{weights[k]}</div>
-                    </div>
-                  ))}
+                <div className="grid grid-cols-3 gap-3">
+                  <label className="flex items-center gap-2"><input type="checkbox" checked={fxParticles} onChange={e=> setFxParticles(e.target.checked)} />粒子</label>
+                  <label className="flex items-center gap-2"><input type="checkbox" checked={fxShake} onChange={e=> setFxShake(e.target.checked)} />屏震</label>
+                  <label className="flex items-center gap-2"><input type="checkbox" checked={gravityStrong} onChange={e=> setGravityStrong(e.target.checked)} />重力加强</label>
                 </div>
-
                 <div className="flex gap-2">
-                  <button className="px-3 py-2 bg-white rounded border" onClick={()=> { setWeights(DEFAULT_WEIGHTS); setRtpTilt(1.0); }}>重置默认权重</button>
-                  <button className="px-3 py-2 bg-white rounded border" onClick={()=> setShowAdmin(false)}>完成</button>
+                  <button className="px-3 py-2 bg-white rounded border" onClick={()=> { /* no-op */ }}>完成</button>
                 </div>
               </div>
             )}

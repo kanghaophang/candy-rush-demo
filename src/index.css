@@ -5,14 +5,19 @@
 html, body, #root { height: 100%; }
 .bg-candy { background: linear-gradient(180deg, #ffe6ec 0%, #ffd7f0 40%, #fde9ff 100%); }
 .board-frame { background: rgba(255,255,255,0.7); border-radius: 22px; box-shadow: 0 10px 30px rgba(0,0,0,.12), inset 0 0 0 1px rgba(255,255,255,.6); }
+
 .btn-round { width: 64px; height: 64px; border-radius: 9999px; display:flex; align-items:center; justify-content:center; font-weight:800; box-shadow: 0 8px 20px rgba(0,0,0,.15); }
 .btn-spin  { background:#ff2f72; color:#fff; } .btn-sec{ background:#ffffffc0; color:#333; border:1px solid rgba(0,0,0,.06); }
 
-@keyframes explode { 0%{transform:scale(1);filter:brightness(1);opacity:1} 100%{transform:scale(1.15);filter:brightness(1.6);opacity:.10} }
+@keyframes explode { 0%{transform:scale(1);filter:brightness(1);opacity:1} 100%{transform:scale(1.1);filter:brightness(1.5);opacity:.65} }
 .explode{ animation: explode .12s cubic-bezier(.2,.6,.2,1); }
 
-@keyframes fall { 0%{transform:translateY(-24px);opacity:.85} 100%{transform:translateY(0);opacity:1} }
-.fall{ animation: fall .12s cubic-bezier(.15,.8,.2,1); animation-delay: var(--d, 0ms); }
+@keyframes vanish { 0%{opacity:1; transform:scale(1)} 100%{opacity:0; transform:scale(.85)} }
+.vanish{ animation: vanish .14s ease-in forwards; }
+
+/* Gravity fall: duration varies via --t, delay via --d; uses a gravity-like bezier */
+@keyframes fallGravity { 0%{transform:translateY(-24px);} 70%{transform:translateY(0);} 85%{transform:translateY(2px);} 100%{transform:translateY(0);} }
+.fall{ animation-name: fallGravity; animation-duration: var(--t, 120ms); animation-delay: var(--d, 0ms); animation-timing-function: cubic-bezier(.15,.9,.25,1); animation-fill-mode: both; }
 
 @keyframes settle { 0%{transform:translateY(0)} 60%{transform:translateY(2px)} 100%{transform:translateY(0)} }
 .settle{ animation: settle .08s linear; }
@@ -20,6 +25,18 @@ html, body, #root { height: 100%; }
 .badge{ position:absolute; bottom:.25rem; right:.25rem; font-size:.65rem; background:rgba(0,0,0,.6); color:#fff; border-radius:.25rem; padding:.05rem .25rem; }
 .banner{ animation: bannerIn .6s ease-out; }
 @keyframes bannerIn { 0%{transform:scale(.7);opacity:0} 60%{transform:scale(1.08);opacity:1} 100%{transform:scale(1);opacity:1} }
+
+/* Particles */
+.p-layer { pointer-events:none; }
+@keyframes burst { 0%{transform:scale(.4);opacity:0.0} 30%{opacity:1} 100%{transform:scale(1.6);opacity:0} }
+.p-burst { position:absolute; width:70%; height:70%; border-radius:9999px; background:radial-gradient(circle, rgba(255,255,255,.95), rgba(255,255,255,.0) 60%); animation: burst .28s ease-out forwards; }
+
+@keyframes dust { 0%{transform:translateY(0) scale(.8); opacity:0} 40%{opacity:1} 100%{transform:translateY(6px) scale(1.2); opacity:0} }
+.p-dust { position:absolute; bottom:4px; width:60%; height:22%; border-radius:9999px; background:radial-gradient(ellipse at center, rgba(255,255,255,.9), rgba(255,255,255,0)); animation: dust .22s ease-out forwards; filter: blur(1px); }
+
+/* Shake */
+@keyframes shake { 0%{transform:translate(0,0)} 25%{transform:translate(2px,0)} 50%{transform:translate(-2px,0)} 75%{transform:translate(2px,0)} 100%{transform:translate(0,0)} }
+.shake { animation: shake .22s ease-in-out; }
 
 .modal{ position:fixed; inset:0; background:rgba(0,0,0,.4); backdrop-filter: blur(2px); display:flex; align-items:center; justify-content:center; padding:16px; z-index:50; }
 .modal-card{ width:100%; max-width:720px; background:#fff; border-radius:16px; box-shadow:0 20px 40px rgba(0,0,0,.18); padding:16px; }
