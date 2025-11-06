@@ -1,7 +1,8 @@
 
 import React, { useMemo, useState } from 'react'
 import { ROWS, COLS, MAX_MULT, SYMBOLS, DEFAULT_WEIGHTS, idx, emptyMult, generateBoard, findClusters, collapseAndRefill, countScatter, awardFreeSpins } from './engine'
-import PT from './data/paytable.json'
+import PT_DEFAULT from './data/paytable.default.json'
+import PT_SUGAR from './data/paytable.sugar_rush.json'
 import './index.css'
 
 const url = (name)=> `${import.meta.env.BASE_URL}sfx/${name}`;
@@ -12,9 +13,9 @@ const TEMPO={ normal:{explode:120,post:70,drop:120,settle:85,between:65,start:10
 const sleep=(ms)=> new Promise(r=> setTimeout(r, ms));
 const RETRIG={3:5,4:10,5:20,6:25,7:30};
 
-function payBySize(sym, size){
+function payBySize(pt, sym, size){
   if(sym==='S') return 0;
-  const thresholds=PT.thresholds, ladder=PT.symbols[sym]||[];
+  const thresholds=pt.thresholds, ladder=pt.symbols[sym]||[];
   let i=-1; for(let k=0;k<thresholds.length;k++){ if(size>=thresholds[k]) i=k; else break; }
   return i<0? 0 : ladder[i];
 }
@@ -25,38 +26,33 @@ function collapseWithDistances(board, weights){
   const nb = [...board];
   const dist = new Array(ROWS*COLS).fill(0);
   for(let c=0;c<COLS;c++){
-    // collect non-null (bottom-up) with their original row index
     const stack=[];
     for(let r=ROWS-1;r>=0;r--){
       const i = r*COLS+c;
       const v = nb[i];
       if(v){ stack.push({v, r0:r}); nb[i]=null; }
     }
-    // place back bottom-up
     let rWrite = ROWS-1;
     for(const it of stack){
       nb[rWrite*COLS+c] = it.v;
-      dist[rWrite*COLS+c] = rWrite - it.r0; // how far it moved down
+      dist[rWrite*COLS+c] = rWrite - it.r0;
       rWrite--;
     }
-    // fill the rest with new picks (from "above"): treat as falling from above top
     while(rWrite>=0){
-      nb[rWrite*COLS+c] = weightedPickShim(weights);
-      // approximate distance as how many empty slots above it + 1
-      dist[rWrite*COLS+c] = (rWrite+1); // higher row => longer fall
+      const [k,v] = weightedPickShim(weights);
+      nb[rWrite*COLS+c] = k;
+      dist[rWrite*COLS+c] = (rWrite+1);
       rWrite--;
     }
   }
   return { nb, dist };
 }
-
-// lightweight weighted pick (mirrors engine.js but local)
-function weightedPickShim(weights){
-  const ents = Object.entries(weights);
+function weightedPickShim(w){
+  const ents = Object.entries(w);
   const total = ents.reduce((s,[,v])=>s+v,0);
   let roll = Math.random()*total;
-  for(const [k,v] of ents){ if((roll-=v)<=0) return k; }
-  return ents[ents.length-1][0];
+  for(const [k,v] of ents){ if((roll-=v)<=0) return [k,v]; }
+  return ents[ents.length-1];
 }
 
 export default function App(){
@@ -78,12 +74,16 @@ export default function App(){
   const [auto, setAuto] = useState(0);
   const [exploding, setExploding] = useState(new Set());
   const [banner, setBanner] = useState('');
-  const [showRTP, setShowRTP] = useState(false);
-  const [rtpTilt, setRtpTilt] = useState(1.0);
-  const [pass, setPass] = useState('');
-  const [admin, setAdmin] = useState(false);
-
   const [dropDist, setDropDist] = useState(()=> new Array(ROWS*COLS).fill(0));
+
+  // Admin / RTP / Paytable controls
+  const [showAdmin, setShowAdmin] = useState(false);
+  const [adminPass, setAdminPass] = useState('');
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [rtpTilt, setRtpTilt] = useState(1.0);
+  const [pt, setPt] = useState(PT_SUGAR); // default to Sugar Rush preset, per your request
+  const [buyPriceX, setBuyPriceX] = useState(100); // Buy Free price (× bet)
+  const [buySpins, setBuySpins] = useState(10); // Free spins granted when buying
 
   const effMult = useMemo(()=> inFree? freeMult : tempMult, [inFree, tempMult, freeMult]);
   const tempo = TEMPO[speed] || TEMPO.normal;
@@ -114,7 +114,7 @@ export default function App(){
       const size = cl.cells.length;
       const mults = cl.cells.map(i=> (inFree? fM[i] : tM[i]));
       const avgM = Math.max(1, Math.floor(mults.reduce((a,b)=>a+b,0)/mults.length));
-      const unit = payBySize(cl.symbol, size);
+      const unit = payBySize(pt, cl.symbol, size);
       const pay = unit * avgM * bet;
       win += pay;
       for(const i of cl.cells){
@@ -128,7 +128,7 @@ export default function App(){
     const ratio = win / Math.max(0.01, bet);
     if(ratio>=100) setBanner('EPIC WIN'); else if(ratio>=50) setBanner('MEGA WIN'); else if(ratio>=20) setBanner('BIG WIN'); else setBanner('');
 
-    // column-based drop w/ distance tracking
+    // drop with distance
     const res = collapseWithDistances(nb, weights);
     setBoard(res.nb); setDropDist(res.dist);
     (sfx.drop.currentTime=0, sfx.drop.play());
@@ -178,13 +178,24 @@ export default function App(){
     if(auto && (balance>=bet || (inFree||freeSpins>0))){ const remain=auto===Infinity?Infinity:auto-1; setAuto(remain); if(remain!==0) doSpin(); }
   }
 
+  function buyFree(){
+    const price = bet * buyPriceX;
+    if(isSpinning || inFree) return;
+    if(balance < price) return;
+    setBalance(b=> b - price);
+    setInFree(true);
+    setFreeMult(emptyMult());
+    setFreeSpins(buySpins);
+    setLastWin(0);
+    (sfx.free.currentTime=0, sfx.free.play());
+  }
+
   function Cell({i,k}){
     const def = SYMBOLS.find(s=>s.key===k);
     const isSc = k==='S';
     const m = (inFree? freeMult[i]: tempMult[i]) || 1;
     const col = i % COLS;
     const d = dropDist[i] || 0;
-    // Column offset (12ms per column) + distance factor (22ms per row fallen)
     const delayMs = col*12 + d*22;
     return (
       <div className={`relative flex items-center justify-center rounded-xl border border-white/40 shadow-sm select-none ${def?.color||'bg-slate-200'} fall settle`} style={{aspectRatio:'1/1', '--d': `${delayMs}ms`}}>
@@ -212,7 +223,7 @@ export default function App(){
           <div className="px-3 py-1 rounded-full bg-white/80 shadow border">总赢分：<b>RM {totalWin.toFixed(2)}</b></div>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={()=> setShowRTP(true)} className="px-3 py-1 rounded-full bg-white/80 shadow border">RTP 调整</button>
+          <button onClick={()=> setShowAdmin(true)} className="px-3 py-1 rounded-full bg-white/80 shadow border">Admin</button>
         </div>
       </div>
 
@@ -223,6 +234,7 @@ export default function App(){
           <button onClick={doSpin} disabled={isSpinning} className={"btn-round btn-spin text-lg " + (isSpinning?'opacity-60':'')}>{inFree?'FREE':'SPIN'}</button>
           <button onClick={()=> setAuto(10)} className="btn-round btn-sec text-xs">AUTO<br/>x10</button>
           <button onClick={()=> setAuto(50)} className="btn-round btn-sec text-xs">AUTO<br/>x50</button>
+          <button onClick={buyFree} className="btn-round btn-sec text-xs">BUY<br/>FREE</button>
           <div className="flex gap-2">
             <button onClick={()=> setSpeed('normal')} className={"btn-round btn-sec text-xs "+(speed==='normal'?'ring-2 ring-rose-400':'')}>N</button>
             <button onClick={()=> setSpeed('turbo')}  className={"btn-round btn-sec text-xs "+(speed==='turbo'?'ring-2 ring-rose-400':'')}>T</button>
@@ -248,35 +260,63 @@ export default function App(){
         </div>
       </div>
 
-      {/* RTP modal */}
-      {showRTP && (
-        <div className="modal" onClick={()=> setShowRTP(false)}>
+      {/* Admin modal (RTP, Paytable preset, Buy Free price) */}
+      {showAdmin && (
+        <div className="modal" onClick={()=> setShowAdmin(false)}>
           <div className="modal-card" onClick={e=> e.stopPropagation()}>
-            {!admin ? (
+            {!isAdmin ? (
               <div>
                 <div className="font-bold mb-2">Admin 验证</div>
-                <div className="text-sm mb-2">输入密码（默认 <span className="font-mono">candy</span>）解锁 RTP & 权重</div>
-                <input className="w-full px-3 py-2 border rounded mb-2" placeholder="Admin Password" value={pass} onChange={e=> setPass(e.target.value)} />
-                <button className="px-3 py-2 bg-rose-500 text-white rounded" onClick={()=> setAdmin(pass.trim()==='candy')}>解锁</button>
+                <div className="text-sm mb-2">输入密码（默认 <span className="font-mono">candy</span>）解锁</div>
+                <input className="w-full px-3 py-2 border rounded mb-2" placeholder="Admin Password" value={adminPass} onChange={e=> setAdminPass(e.target.value)} />
+                <button className="px-3 py-2 bg-rose-500 text-white rounded" onClick={()=> setIsAdmin(adminPass.trim()==='candy')}>解锁</button>
               </div>
             ) : (
-              <div className="grid gap-3">
+              <div className="grid gap-4">
+                {/* Paytable preset */}
+                <div>
+                  <div className="font-bold mb-1">赔率表 Preset</div>
+                  <div className="flex gap-2">
+                    <button className="px-3 py-2 bg-white rounded border" onClick={()=> setPt(PT_SUGAR)}>Sugar Rush</button>
+                    <button className="px-3 py-2 bg-white rounded border" onClick={()=> setPt(PT_DEFAULT)}>Default</button>
+                  </div>
+                  <div className="text-xs opacity-70 mt-1">当前 preset：{pt.name||'custom'}</div>
+                </div>
+
+                {/* Buy Free settings */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <div className="font-bold mb-1">Buy Free 价格（×Bet）</div>
+                    <input type="number" min={10} max={500} step={1} value={buyPriceX} onChange={e=> setBuyPriceX(parseInt(e.target.value||'100'))} className="w-full px-3 py-2 border rounded" />
+                    <div className="text-xs opacity-70 mt-1">常见为 100× 或 120×</div>
+                  </div>
+                  <div>
+                    <div className="font-bold mb-1">Buy Free 赠送局数</div>
+                    <input type="number" min={6} max={20} step={1} value={buySpins} onChange={e=> setBuySpins(parseInt(e.target.value||'10'))} className="w-full px-3 py-2 border rounded" />
+                    <div className="text-xs opacity-70 mt-1">常见为 10 局</div>
+                  </div>
+                </div>
+
+                {/* RTP tilt and weights */}
                 <div>
                   <div className="font-bold mb-1">RTP 倾向（0.7–1.4）</div>
                   <input type="range" min={0.7} max={1.4} step={0.01} value={rtpTilt} onChange={e=> applyRtpTilt(parseFloat(e.target.value))} className="w-full" />
                   <div className="text-xs opacity-70 mt-1">当前：{rtpTilt.toFixed(2)}（右侧更高命中，左侧更硬）</div>
                 </div>
-                <div className="font-bold">符号权重</div>
-                {Object.keys(weights).map(k=> (
-                  <div key={k} className="flex items-center gap-2 text-sm">
-                    <div className="w-10 font-mono">{k}</div>
-                    <input type="range" min={0} max={40} value={weights[k]} onChange={e=> setWeights({ ...weights, [k]: +e.target.value })} className="flex-1" />
-                    <div className="w-8 text-right">{weights[k]}</div>
-                  </div>
-                ))}
+                <div>
+                  <div className="font-bold mb-1">符号权重</div>
+                  {Object.keys(weights).map(k=> (
+                    <div key={k} className="flex items-center gap-2 text-sm">
+                      <div className="w-10 font-mono">{k}</div>
+                      <input type="range" min={0} max={40} value={weights[k]} onChange={e=> setWeights({ ...weights, [k]: +e.target.value })} className="flex-1" />
+                      <div className="w-8 text-right">{weights[k]}</div>
+                    </div>
+                  ))}
+                </div>
+
                 <div className="flex gap-2">
-                  <button className="px-3 py-2 bg-white rounded border" onClick={()=> { setWeights(DEFAULT_WEIGHTS); setRtpTilt(1.0); }}>重置默认</button>
-                  <button className="px-3 py-2 bg-white rounded border" onClick={()=> setShowRTP(false)}>完成</button>
+                  <button className="px-3 py-2 bg-white rounded border" onClick={()=> { setWeights(DEFAULT_WEIGHTS); setRtpTilt(1.0); }}>重置默认权重</button>
+                  <button className="px-3 py-2 bg-white rounded border" onClick={()=> setShowAdmin(false)}>完成</button>
                 </div>
               </div>
             )}
