@@ -2,5 +2,12 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
 html, body, #root { height: 100%; }
+@keyframes pop { 0%{transform:scale(.8);opacity:.6} 100%{transform:scale(1);opacity:1} }
+.pop{ animation: pop .18s ease-out; }
+@keyframes pulseWin{ 0%,100%{transform:scale(1)} 50%{transform:scale(1.08)} }
+.pulse-win{ animation: pulseWin .5s ease-in-out; }
+@keyframes explode{ 0%{transform:scale(1);filter:brightness(1)} 100%{transform:scale(1.2);filter:brightness(1.8);opacity:.2} }
+.explode{ animation: explode .22s ease-out; }
+@keyframes fall{ 0%{transform:translateY(-16px);opacity:.8} 100%{transform:translateY(0);opacity:1} }
+.fall{ animation: fall .15s linear; }
