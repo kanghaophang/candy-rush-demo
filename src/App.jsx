@@ -8,7 +8,7 @@ const url = (name)=> `${import.meta.env.BASE_URL}sfx/${name}`;
 const sfx = { click:new Audio(url('click.wav')), spin:new Audio(url('spin.wav')), win:new Audio(url('win.wav')), big:new Audio(url('bigwin.wav')), scatter:new Audio(url('scatter.wav')), free:new Audio(url('free.wav')), drop:new Audio(url('drop.wav')) };
 Object.values(sfx).forEach(a=> { a.preload='auto'; a.volume=.4; });
 
-const TEMPO={ normal:{explode:120,post:70,drop:110,settle:80,between:60,start:100}, turbo:{explode:75,post:40,drop:70,settle:55,between:35,start:60}, hyper:{explode:55,post:25,drop:55,settle:40,between:25,start:45} };
+const TEMPO={ normal:{explode:120,post:70,drop:120,settle:85,between:65,start:100}, turbo:{explode:75,post:40,drop:85,settle:60,between:40,start:60}, hyper:{explode:55,post:25,drop:65,settle:45,between:28,start:45} };
 const sleep=(ms)=> new Promise(r=> setTimeout(r, ms));
 const RETRIG={3:5,4:10,5:20,6:25,7:30};
 
@@ -19,6 +19,45 @@ function payBySize(sym, size){
   return i<0? 0 : ladder[i];
 }
 function nextMult(m){ if(m<2) return 2; return Math.min(MAX_MULT, m*2); }
+
+// Collapse + distance tracker
+function collapseWithDistances(board, weights){
+  const nb = [...board];
+  const dist = new Array(ROWS*COLS).fill(0);
+  for(let c=0;c<COLS;c++){
+    // collect non-null (bottom-up) with their original row index
+    const stack=[];
+    for(let r=ROWS-1;r>=0;r--){
+      const i = r*COLS+c;
+      const v = nb[i];
+      if(v){ stack.push({v, r0:r}); nb[i]=null; }
+    }
+    // place back bottom-up
+    let rWrite = ROWS-1;
+    for(const it of stack){
+      nb[rWrite*COLS+c] = it.v;
+      dist[rWrite*COLS+c] = rWrite - it.r0; // how far it moved down
+      rWrite--;
+    }
+    // fill the rest with new picks (from "above"): treat as falling from above top
+    while(rWrite>=0){
+      nb[rWrite*COLS+c] = weightedPickShim(weights);
+      // approximate distance as how many empty slots above it + 1
+      dist[rWrite*COLS+c] = (rWrite+1); // higher row => longer fall
+      rWrite--;
+    }
+  }
+  return { nb, dist };
+}
+
+// lightweight weighted pick (mirrors engine.js but local)
+function weightedPickShim(weights){
+  const ents = Object.entries(weights);
+  const total = ents.reduce((s,[,v])=>s+v,0);
+  let roll = Math.random()*total;
+  for(const [k,v] of ents){ if((roll-=v)<=0) return k; }
+  return ents[ents.length-1][0];
+}
 
 export default function App(){
   const [balance, setBalance] = useState(1000);
@@ -40,9 +79,11 @@ export default function App(){
   const [exploding, setExploding] = useState(new Set());
   const [banner, setBanner] = useState('');
   const [showRTP, setShowRTP] = useState(false);
-  const [rtpTilt, setRtpTilt] = useState(1.0); // 0.7 ~ 1.4
+  const [rtpTilt, setRtpTilt] = useState(1.0);
   const [pass, setPass] = useState('');
   const [admin, setAdmin] = useState(false);
+
+  const [dropDist, setDropDist] = useState(()=> new Array(ROWS*COLS).fill(0));
 
   const effMult = useMemo(()=> inFree? freeMult : tempMult, [inFree, tempMult, freeMult]);
   const tempo = TEMPO[speed] || TEMPO.normal;
@@ -53,8 +94,7 @@ export default function App(){
       if(k==='S') return [k, Math.max(1, Math.round(w / mult))];
       return [k, Math.max(1, Math.round(w * mult))];
     }));
-    setWeights(adj);
-    setRtpTilt(mult);
+    setWeights(adj); setRtpTilt(mult);
   }
 
   async function resolveOnce(cur){
@@ -64,10 +104,12 @@ export default function App(){
     const nb=[...cur];
     const tM=[...tempMult], fM=[...freeMult];
 
+    // explode
     const boom = new Set(); clusters.forEach(cl=> cl.cells.forEach(i=> boom.add(i)));
     setExploding(boom); (sfx.win.currentTime=0, sfx.win.play());
     await sleep(tempo.explode); setExploding(new Set()); await sleep(tempo.post);
 
+    // payout + mult
     for(const cl of clusters){
       const size = cl.cells.length;
       const mults = cl.cells.map(i=> (inFree? fM[i] : tM[i]));
@@ -86,11 +128,14 @@ export default function App(){
     const ratio = win / Math.max(0.01, bet);
     if(ratio>=100) setBanner('EPIC WIN'); else if(ratio>=50) setBanner('MEGA WIN'); else if(ratio>=20) setBanner('BIG WIN'); else setBanner('');
 
-    collapseAndRefill(nb, weights);
-    setBoard([...nb]); (sfx.drop.currentTime=0, sfx.drop.play());
-    await sleep(tempo.drop); setBoard(b=> [...b]); await sleep(tempo.settle);
+    // column-based drop w/ distance tracking
+    const res = collapseWithDistances(nb, weights);
+    setBoard(res.nb); setDropDist(res.dist);
+    (sfx.drop.currentTime=0, sfx.drop.play());
+    await sleep(tempo.drop);
+    setBoard(b=> [...b]); await sleep(tempo.settle);
     await sleep(tempo.between);
-    return { did:true, cur: nb };
+    return { did:true, cur: res.nb };
   }
 
   async function doSpin(){
@@ -101,7 +146,7 @@ export default function App(){
     if(!inFree) setTempMult(emptyMult());
 
     const fresh = generateBoard(weights);
-    setBoard([...fresh]);
+    setBoard([...fresh]); setDropDist(new Array(ROWS*COLS).fill(0));
     let cur=[...fresh];
 
     if(freeSpins<=0) setBalance(b=> b - bet);
@@ -136,10 +181,13 @@ export default function App(){
   function Cell({i,k}){
     const def = SYMBOLS.find(s=>s.key===k);
     const isSc = k==='S';
-    const r = Math.floor(i/7); // per-row stagger
     const m = (inFree? freeMult[i]: tempMult[i]) || 1;
+    const col = i % COLS;
+    const d = dropDist[i] || 0;
+    // Column offset (12ms per column) + distance factor (22ms per row fallen)
+    const delayMs = col*12 + d*22;
     return (
-      <div className={`relative flex items-center justify-center rounded-xl border border-white/40 shadow-sm select-none ${def?.color||'bg-slate-200'} fall settle`} style={{aspectRatio:'1/1', '--d': `${r*18}ms`}}>
+      <div className={`relative flex items-center justify-center rounded-xl border border-white/40 shadow-sm select-none ${def?.color||'bg-slate-200'} fall settle`} style={{aspectRatio:'1/1', '--d': `${delayMs}ms`}}>
         <div className="text-2xl md:text-3xl">{def?.label||'?'}</div>
         {m>1 && <div className="badge">x{m}</div>}
         {isSc && <div className="absolute inset-0 rounded-xl ring-2 ring-pink-400"></div>}
