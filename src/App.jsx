@@ -71,6 +71,8 @@ export default function App(){
     setLastWin(0);
     sfx.spin();
     if(!inFree) setTempMult(emptyMult());
+    const fresh = generateBoard(weights);
+    setBoard([...fresh]);
     let cur=[...board];
     if(freeSpins<=0) setBalance(b=> b - bet);
     await sleep(turbo?60:160);
