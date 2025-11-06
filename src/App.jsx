@@ -9,7 +9,7 @@ const url = (name)=> `${import.meta.env.BASE_URL}sfx/${name}`;
 const sfx = { click:new Audio(url('click.wav')), spin:new Audio(url('spin.wav')), win:new Audio(url('win.wav')), big:new Audio(url('bigwin.wav')), scatter:new Audio(url('scatter.wav')), free:new Audio(url('free.wav')), drop:new Audio(url('drop.wav')) };
 Object.values(sfx).forEach(a=> { a.preload='auto'; a.volume=.4; });
 
-const TEMPO={ normal:{explode:120,vanish:140,post:40,drop:120,settle:85,between:65,start:100}, turbo:{explode:80,vanish:120,post:30,drop:85,settle:60,between:40,start:60}, hyper:{explode:60,vanish:100,post:20,drop:65,settle:45,between:28,start:45} };
+const TEMPO={ normal:{explode:120,float:160,vanish:140,post:40,drop:120,settle:85,between:65,start:100}, turbo:{explode:80,float:130,vanish:120,post:30,drop:85,settle:60,between:40,start:60}, hyper:{explode:60,float:110,vanish:100,post:20,drop:65,settle:45,between:28,start:45} };
 const sleep=(ms)=> new Promise(r=> setTimeout(r, ms));
 const RETRIG={3:5,4:10,5:20,6:25,7:30};
 
@@ -21,18 +21,12 @@ function payBySize(pt, sym, size){
 }
 function nextMult(m){ if(m<2) return 2; return Math.min(MAX_MULT, m*2); }
 
-// collapse with distances & return nb, dist
 function collapseWithDistances(board, weights){
   const nb = [...board];
   const dist = new Array(ROWS*COLS).fill(0);
-  // helper weightedPick
   const ents = Object.entries(weights);
   const total = ents.reduce((s,[,v])=>s+v,0);
-  const pick = ()=>{
-    let roll=Math.random()*total;
-    for(const [k,v] of ents){ if((roll-=v)<=0) return k; }
-    return ents[ents.length-1][0];
-  };
+  const pick = ()=>{ let roll=Math.random()*total; for(const [k,v] of ents){ if((roll-=v)<=0) return k; } return ents[ents.length-1][0]; };
   for(let c=0;c<COLS;c++){
     const stack=[];
     for(let r=ROWS-1;r>=0;r--){
@@ -72,6 +66,7 @@ export default function App(){
   const [speed, setSpeed] = useState('normal');
   const [auto, setAuto] = useState(0);
   const [exploding, setExploding] = useState(new Set());
+  const [floating, setFloating] = useState(new Set());
   const [vanishing, setVanishing] = useState(new Set());
   const [banner, setBanner] = useState('');
   const [dropDist, setDropDist] = useState(()=> new Array(ROWS*COLS).fill(0));
@@ -88,6 +83,7 @@ export default function App(){
   const [fxParticles, setFxParticles] = useState(true);
   const [fxShake, setFxShake] = useState(true);
   const [gravityStrong, setGravityStrong] = useState(true);
+  const [stagedDrop, setStagedDrop] = useState(true); // upper half -> lower half
 
   const effMult = useMemo(()=> inFree? freeMult : tempMult, [inFree, tempMult, freeMult]);
   const tempo = TEMPO[speed] || TEMPO.normal;
@@ -108,21 +104,21 @@ export default function App(){
     const nb=[...cur];
     const tM=[...tempMult], fM=[...freeMult];
 
-    // explode
+    // 1) 爆光
     const boom = new Set(); clusters.forEach(cl=> cl.cells.forEach(i=> boom.add(i)));
     setExploding(boom); (sfx.win.currentTime=0, sfx.win.play());
     await sleep(tempo.explode);
 
-    // particles on explode
-    if(fxParticles){
-      setVanishing(boom); // use vanish animation path
-    }else{
-      setVanishing(boom);
-    }
-    await sleep(tempo.vanish);
-    setExploding(new Set());
+    // 2) 弹浮（停留帧）
+    setFloating(boom);
+    await sleep(tempo.float);
 
-    // payout + mult + remove
+    // 3) 渐隐
+    setVanishing(boom);
+    await sleep(tempo.vanish);
+    setExploding(new Set()); setFloating(new Set());
+
+    // 4) 结算 + 倍数 + 置空
     for(const cl of clusters){
       const size = cl.cells.length;
       const mults = cl.cells.map(i=> (inFree? fM[i] : tM[i]));
@@ -141,17 +137,15 @@ export default function App(){
     const ratio = win / Math.max(0.01, bet);
     if(ratio>=100) setBanner('EPIC WIN'); else if(ratio>=50) setBanner('MEGA WIN'); else if(ratio>=20) setBanner('BIG WIN'); else setBanner('');
 
-    // drop
+    // 5) 掉落
     const res = collapseWithDistances(nb, weights);
     setBoard(res.nb); setDropDist(res.dist);
     (sfx.drop.currentTime=0, sfx.drop.play());
 
-    // optional shake when many cells moved or many clusters
+    // 屏震
     if(fxShake){
       const moved = res.dist.reduce((s,x)=> s+(x>0?1:0), 0);
-      if(moved>=10 || clusters.length>=2){
-        setShake(true); setTimeout(()=> setShake(false), 220);
-      }
+      if(moved>=10 || clusters.length>=2){ setShake(true); setTimeout(()=> setShake(false), 220); }
     }
 
     await sleep(tempo.drop);
@@ -187,6 +181,7 @@ export default function App(){
       if(addFs>0){ setInFree(true); setFreeMult(emptyMult()); setFreeSpins(addFs); (sfx.free.currentTime=0, sfx.free.play()); }
       else { setBalance(b=> b + lastWin); setLastWin(0); }
     }else{
+      const RETRIG={3:5,4:10,5:20,6:25,7:30};
       let add=0; Object.keys(RETRIG).sort((a,b)=>b-a).forEach(k=> { if(sc>=+k && add===0) add = RETRIG[k]; });
       if(add>0){ setFreeSpins(x=> x+add); (sfx.free.currentTime=0, sfx.free.play()); }
       setFreeSpins(x=> x-1);
@@ -216,17 +211,26 @@ export default function App(){
     const def = SYMBOLS.find(s=>s.key===k);
     const isSc = k==='S';
     const m = (inFree? freeMult[i]: tempMult[i]) || 1;
+    const r = Math.floor(i / COLS);
     const col = i % COLS;
     const d = dropDist[i] || 0;
-    // delay and duration: column offset + distance-dependent duration
+
+    // staged: 上半列先（r < ROWS/2），下半列后
+    const phase = (r < Math.floor(ROWS/2) ? 0 : 110); // ms
     const delayMs = col*12 + d*22;
-    const durMs = (gravityStrong ? 110 + d*35 : 100 + d*22); // stronger gravity => longer travel time for high cells
+    const durMs = (gravityStrong ? 110 + d*35 : 100 + d*22);
+
     const isExpl = exploding.has(i);
+    const isFloat = floating.has(i);
     const isVan = vanishing.has(i);
-    const anim = isVan ? 'vanish' : (isExpl ? 'explode' : 'fall');
+
+    const anim = isVan ? 'vanish' : (isExpl ? 'explode' : (isFloat ? 'float' : 'fall'));
+    const scatterClass = (isSc && d>0) ? 'scatter-run' : '';
+
     return (
-      <div className={`relative flex items-center justify-center rounded-xl border border-white/40 shadow-sm select-none ${def?.color||'bg-slate-200'} ${anim}`} style={{aspectRatio:'1/1', '--d': `${delayMs}ms`, '--t': `${durMs}ms`}}>
-        {/* Particles layers */}
+      <div className={`relative flex items-center justify-center rounded-xl border border-white/40 shadow-sm select-none ${def?.color||'bg-slate-200'} ${anim} ${scatterClass}`}
+           style={{aspectRatio:'1/1', '--d': `${delayMs}ms`, '--t': `${durMs}ms`, '--phase': (stagedDrop? ${phase}ms : '0ms')}}>
+        {/* Particles */}
         <div className="p-layer absolute inset-0 flex items-center justify-center pointer-events-none">
           {isExpl && fxParticles && <div className="p-burst" />}
           {d>0 && fxParticles && !isExpl && !isVan && <div className="p-dust" />}
@@ -292,7 +296,7 @@ export default function App(){
         </div>
       </div>
 
-      {/* Admin modal */}
+      {/* Admin modal with staged toggle */}
       {showAdmin && (
         <div className="modal" onClick={()=> setShowAdmin(false)}>
           <div className="modal-card" onClick={e=> e.stopPropagation()}>
@@ -330,6 +334,9 @@ export default function App(){
                   <label className="flex items-center gap-2"><input type="checkbox" checked={fxParticles} onChange={e=> setFxParticles(e.target.checked)} />粒子</label>
                   <label className="flex items-center gap-2"><input type="checkbox" checked={fxShake} onChange={e=> setFxShake(e.target.checked)} />屏震</label>
                   <label className="flex items-center gap-2"><input type="checkbox" checked={gravityStrong} onChange={e=> setGravityStrong(e.target.checked)} />重力加强</label>
+                </div>
+                <div>
+                  <label className="flex items-center gap-2"><input type="checkbox" checked={stagedDrop} onChange={e=> setStagedDrop(e.target.checked)} />列内分批落子（上半列→下半列）</label>
                 </div>
                 <div className="flex gap-2">
                   <button className="px-3 py-2 bg-white rounded border" onClick={()=> { /* no-op */ }}>完成</button>
