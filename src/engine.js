@@ -7,7 +7,7 @@ export const SYMBOLS=[
   { key:'G', label:'🍏', color:'bg-green-300' },
   { key:'B', label:'🫐', color:'bg-blue-300' },
   { key:'P', label:'🍇', color:'bg-violet-300' },
-  { key:'S', label:'🍬S', color:'bg-pink-300' }, // scatter
+  { key:'S', label:'🍬S', color:'bg-pink-300' },
 ];
 export const DEFAULT_WEIGHTS={R:18,O:18,Y:18,G:16,B:14,P:12,S:3};
 export const idx=(r,c)=> r*COLS+c, inBounds=(r,c)=> r>=0&&r<ROWS&&c>=0&&c<COLS;
