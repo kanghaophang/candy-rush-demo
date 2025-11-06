@@ -3,25 +3,18 @@
 @tailwind components;
 @tailwind utilities;
 html, body, #root { height: 100%; }
-
-/* Clean candy gradient */
 .bg-candy { background: linear-gradient(180deg, #ffe6ec 0%, #ffd7f0 40%, #fde9ff 100%); }
-
-/* Reel frame */
 .board-frame { background: rgba(255,255,255,0.7); border-radius: 22px; box-shadow: 0 10px 30px rgba(0,0,0,.12), inset 0 0 0 1px rgba(255,255,255,.6); }
-
-/* Spin column buttons */
 .btn-round { width: 64px; height: 64px; border-radius: 9999px; display:flex; align-items:center; justify-content:center; font-weight:800; box-shadow: 0 8px 20px rgba(0,0,0,.15); }
-.btn-spin  { background:#ff2f72; color:#fff; }
-.btn-sec   { background:#ffffffc0; color:#333; border:1px solid rgba(0,0,0,.06); }
-
-/* Animations */
+.btn-spin  { background:#ff2f72; color:#fff; } .btn-sec{ background:#ffffffc0; color:#333; border:1px solid rgba(0,0,0,.06); }
 @keyframes explode { 0%{transform:scale(1);filter:brightness(1);opacity:1} 100%{transform:scale(1.15);filter:brightness(1.6);opacity:.10} }
 .explode{ animation: explode .12s cubic-bezier(.2,.6,.2,1); }
-@keyframes fall { 0%{transform:translateY(-18px);opacity:.85} 100%{transform:translateY(0);opacity:1} }
-.fall{ animation: fall .11s cubic-bezier(.15,.8,.2,1); }
+@keyframes fall { 0%{transform:translateY(-22px);opacity:.85} 100%{transform:translateY(0);opacity:1} }
+.fall{ animation: fall .12s cubic-bezier(.15,.8,.2,1); animation-delay: var(--d, 0ms); }
 @keyframes settle { 0%{transform:translateY(0)} 60%{transform:translateY(2px)} 100%{transform:translateY(0)} }
 .settle{ animation: settle .08s linear; }
 .badge{ position:absolute; bottom:.25rem; right:.25rem; font-size:.65rem; background:rgba(0,0,0,.6); color:#fff; border-radius:.25rem; padding:.05rem .25rem; }
 .banner{ animation: bannerIn .6s ease-out; }
 @keyframes bannerIn { 0%{transform:scale(.7);opacity:0} 60%{transform:scale(1.08);opacity:1} 100%{transform:scale(1);opacity:1} }
+.modal{ position:fixed; inset:0; background:rgba(0,0,0,.4); backdrop-filter: blur(2px); display:flex; align-items:center; justify-content:center; padding:16px; z-index:50; }
+.modal-card{ width:100%; max-width:720px; background:#fff; border-radius:16px; box-shadow:0 20px 40px rgba(0,0,0,.18); padding:16px; }

@@ -39,8 +39,23 @@ export default function App(){
   const [auto, setAuto] = useState(0);
   const [exploding, setExploding] = useState(new Set());
   const [banner, setBanner] = useState('');
+  const [showRTP, setShowRTP] = useState(false);
+  const [rtpTilt, setRtpTilt] = useState(1.0); // 0.7 ~ 1.4
+  const [pass, setPass] = useState('');
+  const [admin, setAdmin] = useState(false);
+
   const effMult = useMemo(()=> inFree? freeMult : tempMult, [inFree, tempMult, freeMult]);
   const tempo = TEMPO[speed] || TEMPO.normal;
+
+  function applyRtpTilt(mult){
+    const base={...DEFAULT_WEIGHTS};
+    const adj=Object.fromEntries(Object.entries(base).map(([k,w])=>{
+      if(k==='S') return [k, Math.max(1, Math.round(w / mult))];
+      return [k, Math.max(1, Math.round(w * mult))];
+    }));
+    setWeights(adj);
+    setRtpTilt(mult);
+  }
 
   async function resolveOnce(cur){
     const clusters = findClusters(cur);
@@ -118,10 +133,24 @@ export default function App(){
     if(auto && (balance>=bet || (inFree||freeSpins>0))){ const remain=auto===Infinity?Infinity:auto-1; setAuto(remain); if(remain!==0) doSpin(); }
   }
 
+  function Cell({i,k}){
+    const def = SYMBOLS.find(s=>s.key===k);
+    const isSc = k==='S';
+    const r = Math.floor(i/7); // per-row stagger
+    const m = (inFree? freeMult[i]: tempMult[i]) || 1;
+    return (
+      <div className={`relative flex items-center justify-center rounded-xl border border-white/40 shadow-sm select-none ${def?.color||'bg-slate-200'} fall settle`} style={{aspectRatio:'1/1', '--d': `${r*18}ms`}}>
+        <div className="text-2xl md:text-3xl">{def?.label||'?'}</div>
+        {m>1 && <div className="badge">x{m}</div>}
+        {isSc && <div className="absolute inset-0 rounded-xl ring-2 ring-pink-400"></div>}
+      </div>
+    )
+  }
+
   const grid = (
     <div className="board-frame p-2">
       <div className="grid grid-cols-7 gap-2">
-        {board.map((k,i)=> <Cell key={i} i={i} k={k} m={effMult[i]||1} exploding={exploding.has(i)} />)}
+        {board.map((k,i)=> <Cell key={i} i={i} k={k} />)}
       </div>
     </div>
   );
@@ -134,7 +163,9 @@ export default function App(){
           <div className="px-3 py-1 rounded-full bg-white/80 shadow border">Free 剩余：<b>{freeSpins}</b></div>
           <div className="px-3 py-1 rounded-full bg-white/80 shadow border">总赢分：<b>RM {totalWin.toFixed(2)}</b></div>
         </div>
-        <button onClick={()=> alert('Paytable 见 data/paytable.json（可自定义）')} className="px-3 py-1 rounded-full bg-white/80 shadow border">赔率表</button>
+        <div className="flex items-center gap-2">
+          <button onClick={()=> setShowRTP(true)} className="px-3 py-1 rounded-full bg-white/80 shadow border">RTP 调整</button>
+        </div>
       </div>
 
       {/* Middle: grid + right column */}
@@ -169,24 +200,48 @@ export default function App(){
         </div>
       </div>
 
+      {/* RTP modal */}
+      {showRTP && (
+        <div className="modal" onClick={()=> setShowRTP(false)}>
+          <div className="modal-card" onClick={e=> e.stopPropagation()}>
+            {!admin ? (
+              <div>
+                <div className="font-bold mb-2">Admin 验证</div>
+                <div className="text-sm mb-2">输入密码（默认 <span className="font-mono">candy</span>）解锁 RTP & 权重</div>
+                <input className="w-full px-3 py-2 border rounded mb-2" placeholder="Admin Password" value={pass} onChange={e=> setPass(e.target.value)} />
+                <button className="px-3 py-2 bg-rose-500 text-white rounded" onClick={()=> setAdmin(pass.trim()==='candy')}>解锁</button>
+              </div>
+            ) : (
+              <div className="grid gap-3">
+                <div>
+                  <div className="font-bold mb-1">RTP 倾向（0.7–1.4）</div>
+                  <input type="range" min={0.7} max={1.4} step={0.01} value={rtpTilt} onChange={e=> applyRtpTilt(parseFloat(e.target.value))} className="w-full" />
+                  <div className="text-xs opacity-70 mt-1">当前：{rtpTilt.toFixed(2)}（右侧更高命中，左侧更硬）</div>
+                </div>
+                <div className="font-bold">符号权重</div>
+                {Object.keys(weights).map(k=> (
+                  <div key={k} className="flex items-center gap-2 text-sm">
+                    <div className="w-10 font-mono">{k}</div>
+                    <input type="range" min={0} max={40} value={weights[k]} onChange={e=> setWeights({ ...weights, [k]: +e.target.value })} className="flex-1" />
+                    <div className="w-8 text-right">{weights[k]}</div>
+                  </div>
+                ))}
+                <div className="flex gap-2">
+                  <button className="px-3 py-2 bg-white rounded border" onClick={()=> { setWeights(DEFAULT_WEIGHTS); setRtpTilt(1.0); }}>重置默认</button>
+                  <button className="px-3 py-2 bg-white rounded border" onClick={()=> setShowRTP(false)}>完成</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Banner */}
       {banner && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50">
           <div className="banner px-5 py-2 rounded-xl bg-yellow-300/90 text-amber-900 font-extrabold shadow-lg">{banner}</div>
         </div>
       )}
-    </div>
-  )
-}
-
-function Cell({i,k,m,exploding}){
-  const def = SYMBOLS.find(s=>s.key===k);
-  const isSc = k==='S';
-  return (
-    <div className={`relative flex items-center justify-center rounded-xl border border-white/40 shadow-sm select-none ${def?.color||'bg-slate-200'} ${exploding? 'explode':'fall'} settle`} style={{aspectRatio:'1/1'}}>
-      <div className="text-2xl md:text-3xl">{def?.label||'?'}</div>
-      {m>1 && <div className="badge">x{m}</div>}
-      {isSc && <div className="absolute inset-0 rounded-xl ring-2 ring-pink-400"></div>}
     </div>
   )
 }

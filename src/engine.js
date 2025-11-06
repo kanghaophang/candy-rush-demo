@@ -1,5 +1,5 @@
 
-export const ROWS=7, COLS=7, MAX_MULT=128;
+export const ROWS=7, COLS=7, MAX_MULT=1028;
 export const SYMBOLS=[
   { key:'R', label:'🍓', color:'bg-rose-300' },
   { key:'O', label:'🍊', color:'bg-orange-300' },
